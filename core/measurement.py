@@ -5,26 +5,30 @@ from typing import ClassVar, Tuple, List
 
 __all__ = ["MeasurementFrame"]
 
-
 @dataclass(frozen=True, slots=True)
 class MeasurementFrame:
-    time_stm32:  float
-    time_px4:    float
-    time_gps:    float
-    load1:       float
-    load2:       float
-    load3:       float
-    load4:       float
-    load5:       float
-    load6:       float
-    thrust:      float
-    torque:      float
-    voltage:     float
-    current:     float
-    rpm:         float
-    temperature: float
+    stm32_timestamp:  float  # STM32 Timestamp
+    pixhawk_timestamp: float  # Pixhawk Timestamp  
+    thrust1:         float   # Thrust 1
+    thrust2:         float   # Thrust 2
+    thrust3:         float   # Thrust 3
+    thrust4:         float   # Thrust 4
+    thrust5:         float   # Thrust 5
+    thrust6:         float   # Thrust 6
+    voltage:         float   # Voltage
+    current:         float   # Current
+    rpm:             float   # RPM
+    temperature:     float   # Temperature
+    torque:          float   # Torque
+    load:            float   # Load
 
-    _FORMAT: ClassVar[str] = "<15f"             # little-endian
+    _FORMAT: ClassVar[str] = "<14f"  # little-endian, 14 floats = 56 bytes
+
+    # Combined thrust property for compatibility with existing GUI code
+    @property
+    def thrust(self) -> float:
+        """Total thrust from all 6 thrusters"""
+        return self.thrust1 + self.thrust2 + self.thrust3 + self.thrust4 + self.thrust5 + self.thrust6
 
     @classmethod
     def from_bytes(cls, payload: bytes) -> "MeasurementFrame":

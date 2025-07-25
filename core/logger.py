@@ -1,6 +1,8 @@
+# logger.py
 from __future__ import annotations
 import csv, time, datetime, pathlib, threading, queue
 from .measurement import MeasurementFrame
+from .logging_utils import log  # You already have this helper to log with timestamps
 
 class DataLogger(threading.Thread):
     """
@@ -22,17 +24,18 @@ class DataLogger(threading.Thread):
 
     def run(self):
         with self.file.open("w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["ts_wall"] +
-                       list(MeasurementFrame.__dataclass_fields__.keys()))
+            writer = csv.writer(f)
+            writer.writerow(["ts_wall"] +
+                            list(MeasurementFrame.__dataclass_fields__.keys()))
             while not self.stop_evt.is_set():
                 try:
                     frame: MeasurementFrame = self.q.get(timeout=0.5)
-                    w.writerow([time.time(), *frame.to_tuple()])
+                    writer.writerow([time.time(), *frame.to_tuple()])
                 except queue.Empty:
                     continue
 
     def stop(self):
+        """Stop the logger and save the file."""
         self.stop_evt.set()
         self.join()
-        print(f"[LOG] Saved → {self.file.resolve()}")
+        log(f"[LOG] Saved → {self.file.resolve()}")

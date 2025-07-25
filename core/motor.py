@@ -1,6 +1,19 @@
 from __future__ import annotations
 import sys, time, threading, datetime as dt
 from typing import List
+import os,sys
+
+import core.shared_state as globals
+
+
+# Add the 'core' folder to sys.path
+# core_path = os.path.join(os.path.dirname(__file__), 'core')
+# sys.path.append(core_path)
+
+# Now import the shared_state module
+# import shared_state as globals
+from core.shared_state import armed_status
+
 
 try:
     from pymavlink import mavutil
@@ -99,21 +112,8 @@ def arm_echo(master, arm_it=True, timeout=6) -> bool:
 
 class MotorController:
     """
-    Wraps pymavlink for servo‐PWM plus arming/disarming.
+    Wraps pymavlink for servo‐PWM plus arming/disarming with thread-safe heartbeat monitoring.
     """
-
-    # Copy your PARAMS dictionary if you still want them:
-    PARAMS = {
-        'ARMING_CHECK': 0,
-        'BRD_SAFETY_DEFLT': 0,
-        'ARSPD_USE': 0,
-        'ARMING_REQUIRE': 0,
-        'COMPASS_USE': 0,
-        'AHRS_GPS_USE': 0,
-        'RCMAP_THROTTLE': 0,
-        'RC_OPTIONS': 1,
-        'EK3_Enable': 0
-    }
 
     def __init__(self, com_port: str, baud: int):
         if mavutil is None:
@@ -122,23 +122,76 @@ class MotorController:
         wait_heartbeat(self.master)
 
         log(f"[Motor] Connected @ {com_port} {baud}")
-
-        # Optional: write parameters exactly as in your original script.
-        # Comment out the loop below if your autopilot rejects these.
-        log("🔧 Writing requested parameters …")
-        for k, v in self.PARAMS.items():
-            set_param(self.master, k, v)
-
         change_mode(self.master, "MANUAL")
 
         # shadow list so we can echo servo values to GUI/console
         self._shadow: List[int] = [1000]*8
+        
+        # Thread-safe heartbeat and armed status monitoring
+        self.last_heartbeat_time = time.time()
+        self.is_armed_status = False
+        self.last_heartbeat = None
+        self._status_lock = threading.RLock()  # Add thread safety
+        self._heartbeat_thread = threading.Thread(target=self._monitor_heartbeat, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _monitor_heartbeat(self):
+        """Continuously monitor for heartbeat messages with proper thread safety"""
+        while True:
+            try:
+                # Use non-blocking receive with short timeout
+                hb = self.master.recv_match(type="HEARTBEAT", blocking=False, timeout=0.05)
+                if hb and getattr(hb, 'type', None) != 1:
+                    time.sleep(1.0)  # Wait longer on error
+                    continue
+                if hb:
+                    with self._status_lock:  # Thread-safe update
+                        self.last_heartbeat_time = time.time()
+                        self.last_heartbeat = hb
+                        # Extract armed status from heartbeat
+                        if getattr(hb, 'base_mode', None) == 81:
+                            self.is_armed_status = True
+                            armed_status = True
+                            print(f"Arm Status:{armed_status} ")
+                        else:
+                            self.is_armed_status = False
+                            armed_status = False
+                            print(f"Arm Status:{armed_status} ")
+                        #self.is_armed_status = is_armed(hb)
+                        print(f"Vehicle Status: {hb}")
+                        
+                
+                time.sleep(0.2)  # Slower polling to reduce interference (200ms)
+            except Exception as e:
+                log(f"Heartbeat monitoring error: {e}")
+                time.sleep(1.0)  # Wait longer on error
+                continue
+
+    def is_connected(self) -> bool:
+        """Check if we've received a heartbeat within the last 3 seconds"""
+        with self._status_lock:
+            return (time.time() - self.last_heartbeat_time) < 3.0
+
+    def get_armed_status(self) -> bool:
+        """Get the current armed status from the most recent heartbeat"""
+        with self._status_lock:
+            return self.is_armed_status if self.is_connected() else False
 
     def arm(self):
-        arm_echo(self.master, True)
+        """Arm with status verification"""
+        with self._status_lock:  # Prevent status reading during arm operation
+            result = arm_echo(self.master, True)
+            # Give time for status to propagate
+            time.sleep(0.5)
+            return result
 
     def disarm(self):
-        arm_echo(self.master, False)
+        """Disarm with status verification"""
+        with self._status_lock:  # Prevent status reading during disarm operation
+            result = arm_echo(self.master, False)
+            # Give time for status to propagate
+            time.sleep(0.5)
+            return result
 
     def set_pwm(self, channel: int, pwm_us: int):
         """
@@ -146,13 +199,14 @@ class MotorController:
         then sends MAV_CMD_DO_SET_SERVO.
         """
         self._shadow[channel-1] = pwm_us
-        print("PWM", self._shadow)   # exact echo format
+        print("PWM", self._shadow)
 
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
-            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
-            0,
-            float(channel),
-            float(pwm_us),
-            0,0,0,0,0)
+        with self._status_lock:  # Thread-safe PWM sending
+            self.master.mav.command_long_send(
+                self.master.target_system,
+                self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+                0,
+                float(channel),
+                float(pwm_us),
+                0,0,0,0,0)
