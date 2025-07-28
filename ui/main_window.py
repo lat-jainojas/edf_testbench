@@ -121,6 +121,9 @@ class MainWindow:
                     # Arm/Disarm Controls
                     dpg.add_button(label="Arm", callback=self._on_arm, width=330)
                     dpg.add_button(label="Disarm", callback=self._on_disarm, width=330)
+                    # Melody Control - Add this new button
+                    dpg.add_button(label="🎵 Play Happy Birthday", callback=self._on_play_melody, width=330)
+
                     dpg.add_separator()
 
                     # Logging Controls
@@ -304,6 +307,96 @@ class MainWindow:
     def _do_if(self, fn):
         if self.coord:
             fn(self.coord)
+
+
+        # Note frequencies for required melody range
+    NOTE_FREQ = {
+        "C4": 261.63, "D4": 293.66, "E4": 329.63, "F4": 349.23, "G4": 392.00,
+        "A4": 440.00, "Bb4": 466.16, "B4": 493.88, "A4" : 440.00
+    }
+
+    def _freq_to_pwm(self, freq, f_min=261, f_max=784, pwm_min=1300, pwm_max=1600):
+        """Linear mapping from frequency to PWM value"""
+        freq = max(min(freq, f_max), f_min)
+        return int(pwm_min + (freq - f_min) / (f_max - f_min) * (pwm_max - pwm_min))
+
+    
+    def _play_happy_birthday(self):
+        """Play Happy Birthday melody through PWM signals - plays twice with correct pitch progression"""
+        if not self.coord or not self.coord.motor:
+            print("Motor controller not available - cannot play melody")
+            return
+        
+        print("🎵 Starting Happy Birthday melody (2x loop)...")
+        
+        # Corrected melody with proper third phrase high notes
+        melody = [
+            # Phrase 1: "Happy Birthday to You"
+            ("C4", 0.3), ("C4", 0.3), ("D4#", 0.6), ("C4", 0.6), ("F4", 0.6), ("E4", 0.9),
+            # Phrase 2: "Happy Birthday to You"  
+            ("C4", 0.3), ("C4", 0.3), ("D4#", 0.7), ("C4", 0.6), ("G4", 0.6), ("F4", 0.9),
+            # Phrase 3: "Happy Birthdayyy toooooo You" (HIGH OCTAVE)
+            ("C4", 0.3), ("C4", 0.3), ("B4", 0.7), ("A4", 0.6), ("G4", 0.6), ("F4", 0.9),
+            # Phrase 4: "Happy Birthday to You" (final resolution)
+            ("Bb4", 0.3), ("Bb4", 0.3), ("A4", 0.6), ("F4", 0.6), ("G4", 0.6), ("F4", 1.2), ("C4", 0.6)
+        ]
+
+        # Add the higher octave note to our frequency dictionary
+        extended_notes = {
+             **self.NOTE_FREQ,
+             "C5": 523.25,  # High C (octave above C4)
+             "D4#": 311.13  # Sharper D4 as discussed
+        }
+
+        try:
+            # Play the melody twice
+            for loop_num in range(1, 3):
+                print(f"\n🎵 Playing loop {loop_num}/2")
+                
+                for i, (note, duration) in enumerate(melody, 1):
+                    freq = extended_notes[note]
+                    display_note = note
+                    
+                    pwm = self._freq_to_pwm(freq)
+                    
+                    print(f"Loop {loop_num} - Note {i:2d}: {display_note:4s}, Freq: {freq:6.1f} Hz, PWM: {pwm:4d} µs, Duration: {duration:.1f}s")
+                    
+                    # Send PWM signal to selected motor
+                    self.coord.motor.set_pwm(self.coord._sel_motor, pwm)
+                    time.sleep(duration)
+                    
+                    # Reset to rest position with short gap
+                    self.coord.motor.set_pwm(self.coord._sel_motor, 1200)
+                    time.sleep(0.05)
+                
+                # Pause between loops
+                if loop_num == 1:
+                    print("🎵 Brief pause between loops...")
+                    time.sleep(0.5)
+                    
+            print("🎵 Happy Birthday melody complete (2x)!")
+            
+        except Exception as e:
+            print(f"Error playing melody: {e}")
+            # Ensure motor is reset
+            if self.coord and self.coord.motor:
+                self.coord.motor.set_pwm(self.coord._sel_motor, 1200)
+
+
+
+    def _on_play_melody(self):
+        """Handle melody button press"""
+        if not self.coord:
+            print("No coordinator available")
+            return
+        
+        if not self.coord.motor:
+            print("Motor controller not available - cannot play melody")
+            return
+        
+        # Run melody in separate thread to avoid blocking GUI
+        threading.Thread(target=self._play_happy_birthday, daemon=True).start()
+
 
     def _on_connect(self):
         s = Settings(
