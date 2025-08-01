@@ -28,7 +28,7 @@ class MainWindow:
     _PLOT_VARS = [
         "Voltage", "Current", "RPM", "Temperature", "Power", "Torque", "Load",
         "Total_Thrust", "Thrust1", "Thrust2", "Thrust3", "Thrust4", "Thrust5", "Thrust6",
-        "STM32_Timestamp", "Pixhawk_Timestamp"
+        "STM32_Timestamp", "Pixhawk_Timestamp","Barometer Temp","Barometer Pressure"
     ]
 
     def __init__(self):
@@ -63,10 +63,10 @@ class MainWindow:
                 with dpg.child_window(width=350, autosize_y=True):
                     dpg.add_text("Connection", bullet=True)
                     with dpg.group(horizontal=True):
-                        self.com_tag  = dpg.add_input_text(label="COM Port", default_value="COM15", width=160)
+                        self.com_tag  = dpg.add_input_text(label="COM Port", default_value="COM5", width=160)
                         self.baud_tag = dpg.add_input_int (label="Baud",     default_value=115200, width=160)
                     with dpg.group(horizontal=True):
-                        self.ip_tag   = dpg.add_input_text(label="STM32 IP", default_value="192.168.144.30", width=160)
+                        self.ip_tag   = dpg.add_input_text(label="Laptop IP", default_value="192.168.144.100", width=160)
                         self.port_tag = dpg.add_input_int (label="UDP Port", default_value=5005,    width=160)
                     dpg.add_button(label="Connect",    callback=self._on_connect,    width=330)
                     dpg.add_button(label="Disconnect", callback=self._on_disconnect, width=330)
@@ -91,6 +91,10 @@ class MainWindow:
                             dpg.add_button(label=f"M{i}", width=38,
                                            callback=self._on_motor, user_data=i)
                     dpg.add_separator()
+
+                    dpg.add_button(label="Record", tag="record_button",
+                                   callback=self._on_record,
+                                   width=330)
 
                     # Throttle slider
                     dpg.add_slider_int(tag="thr_slider", label="Throttle (%)",
@@ -122,14 +126,14 @@ class MainWindow:
                     dpg.add_button(label="Arm", callback=self._on_arm, width=330)
                     dpg.add_button(label="Disarm", callback=self._on_disarm, width=330)
                     # Melody Control - Add this new button
-                    dpg.add_button(label="🎵 Play Happy Birthday", callback=self._on_play_melody, width=330)
-
+                    #dpg.add_button(label="🎵 Play Happy Birthday", callback=self._on_play_melody, width=330)
+                    dpg.add_button(label="STOP", tag ="stop_button",callback=self._on_stop,width=330)
                     dpg.add_separator()
 
                     # Logging Controls
-                    dpg.add_button(label="Record", tag="record_button",
-                                   callback=self._on_record,
-                                   width=330)
+                    # dpg.add_button(label="Record", tag="record_button",
+                    #                callback=self._on_record,
+                    #                width=330)
                     dpg.add_button(label="Pause", tag="pause_button",
                                    callback=self._on_pause, width=330)
                     dpg.add_text("● Recording", tag="record_status",
@@ -150,6 +154,8 @@ class MainWindow:
                         ("power_text",       "Power: 0.00 W"),
                         ("torque_text",      "Torque: 0.00 Nm"),
                         ("load_text",        "Load: 0.00 kg"),
+                        ("baro_t_text", "Baro Temp: 0.00 C"),
+                        ("baro_p_text", "baro Pressure: 0 hPa"),
                         ("throttle_text",    "Throttle: 0%")
                     ]:
                         dpg.add_text(tag=tag, default_value=text)
@@ -402,7 +408,7 @@ class MainWindow:
         s = Settings(
             com_port  = dpg.get_value(self.com_tag),
             baud      = int(dpg.get_value(self.baud_tag)),
-            stm32_ip  = dpg.get_value(self.ip_tag),
+            laptop_ip  = dpg.get_value(self.ip_tag),
             udp_port  = int(dpg.get_value(self.port_tag)),
         )
         s.save()
@@ -448,6 +454,11 @@ class MainWindow:
         except Exception as e:
             print(f"Failed to disarm: {e}")
 
+    def _on_stop(self):
+        if self.coord:
+            self.coord.stop_all()
+        dpg.set_value("thr_slider", 0)
+
     def _on_disconnect(self):
         if self.coord:
             self.coord.shutdown()
@@ -477,6 +488,7 @@ class MainWindow:
     def _on_single(self):
         if not self.coord:
             return
+        #threading.Thread(target=self._run_throttle_pattern, daemon=True).start()
         threading.Thread(
             target=lambda: self.coord.single_shot(
                 self._pending_pct,
@@ -487,6 +499,7 @@ class MainWindow:
 
     def _on_continuous(self, sender, app_data):
         if self.coord:
+            #threading.Thread(target=self._run_throttle_pattern, daemon=True).start()
             self.coord.stop_all()
             self.coord.start_continuous()
             self.coord.send_pwm_pct(self._pending_pct)
@@ -502,6 +515,25 @@ class MainWindow:
         dpg.bind_item_theme(self.plot_series1, self.blue_theme)
         dpg.bind_item_theme(self.plot_series2, self.blue_theme)
 
+    def _run_throttle_pattern(self):
+        """
+        Apply the pattern: 20% for 5s, 30% for 10s, 20% for 5s
+        """
+        pattern = [
+            (20, 5.0),   # (percent, seconds)
+            (30, 10.0),
+            (20, 5.0),
+        ]
+        for pct, dur in pattern:
+            self._pending_pct = pct
+            if self.coord and self.coord.motor:
+                self.coord.send_pwm_pct(pct)
+            time.sleep(dur)
+        # Optional: Return throttle to zero after pattern
+        if self.coord and self.coord.motor:
+            self._pending_pct = 0
+            self.coord.send_pwm_pct(0)
+
     def _on_record(self):
         dpg.show_item("log_popup")
 
@@ -513,7 +545,7 @@ class MainWindow:
         # Create and start DataLogger with queue
         self.data_logger = DataLogger(self.log_queue, prefix)
         self.data_logger.start()
-
+        threading.Thread(target=self._run_throttle_pattern, daemon=True).start()
         # Change plot line color to red for recording
         dpg.bind_item_theme(self.plot_series1, self.red_theme)
         dpg.bind_item_theme(self.plot_series2, self.red_theme)
@@ -534,6 +566,7 @@ class MainWindow:
     def _updater(self):
         """Main update loop - handles both UI updates AND feeds logging queue"""
         while dpg.is_dearpygui_running():
+        
             if not self.coord:
                 time.sleep(0.05)
                 continue
@@ -543,11 +576,18 @@ class MainWindow:
             if frame:
                 self.last_data_time = time.time()  # Update last data time  
                 # Feed data to logging queue if recording (non-blocking)
+                # if self.is_recording and not self.log_queue.full():
+                #     try:
+                #         self.log_queue.put_nowait(frame)
+                #     except queue.Full:
+                #         pass  # Skip if queue is full, don't block UI
+
                 if self.is_recording and not self.log_queue.full():
                     try:
-                        self.log_queue.put_nowait(frame)
+                        self.log_queue.put_nowait((frame, self._pending_pct))
                     except queue.Full:
-                        pass  # Skip if queue is full, don't block UI
+                        pass # Skip if queue is full, don't block UI
+
                 
                 # Continue with UI updates as normal
                 t = time.time() - self._t0
@@ -570,7 +610,9 @@ class MainWindow:
                     "Thrust5": frame.thrust5,
                     "Thrust6": frame.thrust6,
                     "STM32_Timestamp": frame.stm32_timestamp,
-                    "Pixhawk_Timestamp": frame.pixhawk_timestamp
+                    "Pixhawk_Timestamp": frame.pixhawk_timestamp,
+                    "Barometer Temp": frame.baro_t,
+                    "Barometer Pressure": frame.baro_p
                 }
                 
                 # Update history for all plot variables
@@ -624,6 +666,8 @@ class MainWindow:
                 dpg.set_value("thrust4_text",     f"Thrust 4: {frame.thrust4:.2f}")
                 dpg.set_value("thrust5_text",     f"Thrust 5: {frame.thrust5:.2f}")
                 dpg.set_value("thrust6_text",     f"Thrust 6: {frame.thrust6:.2f}")
+                dpg.set_value("baro_t_text", f"Baro Temp: {frame.baro_t:.2f} C")
+                dpg.set_value("baro_p_text", f"Baro Pressure: {frame.baro_p:.2f} hPa")
                 
                 pct = int((self.coord._pwm_cached - 1000) / 10)
                 dpg.set_value("throttle_text",    f"Throttle: {pct}%")

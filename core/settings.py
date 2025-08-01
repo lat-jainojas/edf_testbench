@@ -10,8 +10,9 @@ _CFG = pathlib.Path.home() / ".lat_motor_gui.json"
 class Settings:
     com_port:  str = ""
     baud:      int = 115200
-    stm32_ip:  str = "0.0.0.0"      # bind addr for UDP recv
+    laptop_ip:  str = "0.0.0.0"      # bind addr for UDP recv
     udp_port:  int = 9000
+    stm32_ip: str = "192.168.144.101"
 
     @classmethod
     def load(cls, path: pathlib.Path | None = None) -> "Settings":

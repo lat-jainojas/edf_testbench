@@ -8,7 +8,7 @@ from core.shared_state import armed_status
 
 import datetime
 from .settings    import Settings
-from .motor       import MotorController
+from .motor       import MotorController,MotorControllerwithEthernet
 from .telemetry   import TelemetryReceiver
 from .logger      import DataLogger
 from .measurement import MeasurementFrame
@@ -31,20 +31,21 @@ class AppCoordinator:
 
         # Motor controller (single connection)
         try:
-            self.motor = MotorController(settings.com_port, settings.baud)
-            print(f"Motor controller connected on {settings.com_port}")
+            #self.motor = MotorController(settings.com_port, settings.baud)
+            self.motor = MotorControllerwithEthernet(settings.stm32_ip,settings.udp_port)
+            print(f"Motor controller connected on {settings.udp_port}")
         except Exception as e:
-            print(f"Motor controller unavailable ({settings.com_port}): {e}")
+            print(f"Motor controller unavailable ({settings.udp_port}): {e}")
             print("Continuing in telemetry-only mode...")
             self.motor = None
 
         self.tele = TelemetryReceiver(
-            bind_ip   = settings.stm32_ip,
+            bind_ip   = settings.laptop_ip,
             port      = settings.udp_port,
             dst_queue = self._frame_q
         )
         self.tele.start()
-        print(f"Started UDP telemetry receiver on {settings.stm32_ip}:{settings.udp_port}")
+        print(f"Started UDP telemetry receiver on {settings.laptop_ip}:{settings.udp_port}")
 
         # throttle state for continuous mode
         self._sel_motor   = 1
@@ -135,7 +136,7 @@ class AppCoordinator:
             pct = max(0, min(100, pct))
             pwm = 1000 + int(pct/100*1000)
             self._pwm_cached = pwm
-            self.motor.set_pwm(self._sel_motor, pwm)
+            self.motor.set_pwm_eth(self._sel_motor, pwm)
         else:
             print(f"Motor control unavailable - cannot send {pct}% throttle")
 
@@ -151,7 +152,7 @@ class AppCoordinator:
         if self.motor:
             self._cont_evt.set()
             self.motor.arm()
-            self.motor.set_pwm(self._sel_motor, self._pwm_cached)
+            self.motor.set_pwm_eth(self._sel_motor, self._pwm_cached)
         else:
             print("Motor control unavailable - cannot start continuous mode")
 
@@ -160,14 +161,14 @@ class AppCoordinator:
             self._cont_evt.clear()
             self.motor.disarm()
             for ch in range(1,9):
-                self.motor.set_pwm(ch, 1000)
+                self.motor.set_pwm_eth(ch, 1000)
         else:
             print("Motor control unavailable - cannot stop motors")
 
     def _cont_loop(self):
         while True:
             if self._cont_evt.is_set() and self.motor:
-                self.motor.set_pwm(self._sel_motor, self._pwm_cached)
+                self.motor.set_pwm_eth(self._sel_motor, self._pwm_cached)
             time.sleep(0.1)
 
     # ---------------- Telemetry API ----------------

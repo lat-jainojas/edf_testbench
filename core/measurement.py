@@ -21,8 +21,10 @@ class MeasurementFrame:
     temperature:     float   # Temperature
     torque:          float   # Torque
     load:            float   # Load
-
-    _FORMAT: ClassVar[str] = "<14f"  # little-endian, 14 floats = 56 bytes
+    baro_t:          float
+    baro_p:          float
+    #throttle:        float
+    _FORMAT: ClassVar[str] = "<16f"  # little-endian, 14 floats = 56 bytes
 
     # Combined thrust property for compatibility with existing GUI code
     @property

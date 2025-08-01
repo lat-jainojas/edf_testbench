@@ -2,7 +2,7 @@ from __future__ import annotations
 import sys, time, threading, datetime as dt
 from typing import List
 import os,sys
-
+import socket
 import core.shared_state as globals
 
 
@@ -210,3 +210,59 @@ class MotorController:
                 float(channel),
                 float(pwm_us),
                 0,0,0,0,0)
+
+
+class MotorControllerwithEthernet: 
+
+    def __init__(self, ip: str, port: int):
+        
+
+        # shadow list so we can echo servo values to GUI/console
+        self._shadow: List[int] = [1000]*8
+
+        self.stm32_ip = ip
+        self.stm32_port = port
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._shadow = [1000]*8  # Keep shadow for debug/local cache
+
+        self.last_heartbeat_time = time.time()
+        self.is_armed_status = False
+        self.last_heartbeat = None
+        # self._status_lock = threading.RLock()  # Add thread safety
+        # self._heartbeat_thread = threading.Thread(target=self._monitor_heartbeat, daemon=True)
+        # self._heartbeat_thread.start()
+
+
+
+    def is_connected(self) -> bool:
+        # No real connection check for UDP, always true
+        return True
+
+    def get_armed_status(self) -> bool:
+        return True  # Always "true", as STM32 is always ready
+
+    def arm(self):
+        pass  # NOOP for Ethernet
+
+    def disarm(self):
+        pass  # NOOP for Ethernet
+
+    def set_pwm_eth(self,channel: int, pwm_us: int):
+        """
+        Updates local list, sends pwm command over ethernet. 
+        """
+        self._shadow[channel-1] = pwm_us
+        print("PWM", self._shadow)
+
+        pwm = min(max(pwm_us, 1000), 2000)
+        data = bytearray(3)
+        data[0] = channel
+        data[1] = pwm & 0xFF
+        data[2] = (pwm >> 8) & 0xFF
+        try:
+            self.sock.sendto(data, (self.stm32_ip, self.stm32_port))
+        except Exception as e:
+            print(f"[EthernetController] UDP Error: {e}")
+
+
+
